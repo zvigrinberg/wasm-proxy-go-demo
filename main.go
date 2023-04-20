@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"github.com/buger/jsonparser"
 	"github.com/tetratelabs/proxy-wasm-go-sdk/proxywasm"
 	"github.com/tetratelabs/proxy-wasm-go-sdk/proxywasm/types"
 	"os"
@@ -11,19 +11,12 @@ import (
 
 var propagatedBodyValues RequestBodyDownstream = RequestBodyDownstream{}
 
-const (
-	bufferOperationAppend  = "append"
-	bufferOperationPrepend = "prepend"
-	bufferOperationReplace = "replace"
-)
-
 func main() {
 	proxywasm.SetVMContext(&vmContext{})
 }
 
 // Structure for response body of the interceptor token endpoint
 
-//tinyjson:json
 type InterceptorTokenResponse struct {
 	access_token string
 	expires_in   int
@@ -33,12 +26,12 @@ type InterceptorTokenResponse struct {
 
 // Structure to parse request body and propagate it to the request body of the request to be made to interceptor endpoint.
 
-//tinyjson:json
 type RequestBodyDownstream struct {
 	countryCode           string
 	dataOwningCountryCode string
 }
 
+//go:generate go-json-ice --type=InterceptorRequestBody
 type InterceptorRequestBody struct {
 	countryCode           string
 	dataOwningCountryCode string
@@ -66,14 +59,10 @@ type pluginContext struct {
 	// Embed the default plugin context here,
 	// so that we don't need to reimplement all the methods.
 	types.DefaultPluginContext
-	shouldEchoBody bool
 }
 
 // Override types.DefaultPluginContext.
 func (ctx *pluginContext) NewHttpContext(contextID uint32) types.HttpContext {
-	if ctx.shouldEchoBody {
-		return &echoBodyContext{}
-	}
 	return &setBodyContext{}
 }
 
@@ -82,8 +71,10 @@ func (ctx *pluginContext) OnPluginStart(pluginConfigurationSize int) types.OnPlu
 	data, err := proxywasm.GetPluginConfiguration()
 	if err != nil {
 		proxywasm.LogCriticalf("error reading plugin configuration: %v", err)
+	} else {
+		proxywasm.LogInfof("plugin configuration: %v", data)
 	}
-	ctx.shouldEchoBody = string(data) == "echo"
+
 	return types.OnPluginStartStatusOK
 }
 
@@ -120,18 +111,19 @@ func (ctx *setBodyContext) OnHttpRequestBody(bodySize int, endOfStream bool) typ
 		return types.ActionContinue
 	}
 	proxywasm.LogInfof("original request body: %s", string(originalBody))
-	var clientBody RequestBodyDownstream
-	clientBody.UnmarshalJSON[]byte(originalBody))
-		//json.Unmarshal([]byte(originalBody), &clientBody)
-	propagatedBodyValues.countryCode = clientBody.countryCode
-	propagatedBodyValues.dataOwningCountryCode = clientBody.dataOwningCountryCode
+	//var clientBody RequestBodyDownstream
+	//clientBody.UnmarshalJSON[]byte(originalBody))
+	//json.Unmarshal([]byte(originalBody), &clientBody)
+
+	propagatedBodyValues.countryCode, _ = jsonparser.GetString(originalBody, "countryCode")
+	propagatedBodyValues.dataOwningCountryCode, _ = jsonparser.GetString(originalBody, "dataOwningCountryCode")
 
 	//Get token from token endpoint
 	clientId := os.Getenv("CLIENT_ID")
 	clientSecret := os.Getenv("CLIENT_SECRET")
 	grantType := "client_credentials"
 	urlEncodedBody := "client_id=" + clientId + "&client_secret=" + clientSecret + "&grant_type=" + grantType
-
+	proxywasm.LogInfof("urlEncodedBody= %s", urlEncodedBody)
 	if _, err := proxywasm.DispatchHttpCall("interceptor_service", [][2]string{
 		{":path", "/apigator/identity/v1/token"},
 		{":method", "POST"},
@@ -148,12 +140,10 @@ func (ctx *setBodyContext) OnHttpRequestBody(bodySize int, endOfStream bool) typ
 
 // Override types.DefaultHttpContext.
 func (ctx *setBodyContext) OnHttpResponseHeaders(numHeaders int, endOfStream bool) types.Action {
-	if !ctx.modifyResponse {
-		return types.ActionContinue
-	}
-
 	// Remove Content-Length in order to prevent severs from crashing if we set different body.
+	proxywasm.LogInfo("Removing Content-length header")
 	if err := proxywasm.RemoveHttpResponseHeader("content-length"); err != nil {
+		proxywasm.LogInfof("Failed removing the content-length header -  %v", err)
 		panic(err)
 	}
 
@@ -187,6 +177,7 @@ func (ctx *setBodyContext) OnHttpResponseBody(bodySize int, endOfStream bool) ty
 	interceptorRequestBody.dataSet = originalBodyJsonReady
 	interceptorRequestBody.dataOwningCountryCode = propagatedBodyValues.dataOwningCountryCode
 	interceptorRequestBody.countryCode = propagatedBodyValues.countryCode
+	interceptorRequestBody.manifestName = os.Getenv("MANIFEST_NAME")
 	interceptorRequestBody.jobType = os.Getenv("JOB_TYPE")
 	interceptorRequestBody.snapshotDate = "2023-03-20T00:00:00Z"
 	interceptorRequestBody.restrictedText = os.Getenv("RESTRICTED_TEXT")
@@ -204,10 +195,26 @@ func (ctx *setBodyContext) OnHttpResponseBody(bodySize int, endOfStream bool) ty
 
 	interceptorRequestBody.preserveStringLength = preserveStringLength
 
-	interceptorRequestBodyBytes, err := json.Marshal(interceptorRequestBody)
-	if err != nil {
-		proxywasm.LogErrorf("failed to Marshal interceptor RequestBody struct into bytes :  %v", err)
-	}
+	//interceptorRequestBodyBytes, err := json.Marshal(interceptorRequestBody)
+	interceptorRequestBodyBytes := strings.Builder{}
+	interceptorRequestBodyBytes.WriteString("{")
+	interceptorRequestBodyBytes.WriteString("\"countryCode\":" + " \"" + interceptorRequestBody.countryCode + "\", ")
+	interceptorRequestBodyBytes.WriteString("\"dataOwningCountryCode\":" + " \"" + interceptorRequestBody.dataOwningCountryCode + "\", ")
+	interceptorRequestBodyBytes.WriteString("\"protectNullValues\":" + " \"" + strings.ReplaceAll(strconv.FormatBool(interceptorRequestBody.protectNullValues), "\"", "") + "\", ")
+	interceptorRequestBodyBytes.WriteString("\"preserveStringLength\":" + " \"" + strings.ReplaceAll(strconv.FormatBool(interceptorRequestBody.preserveStringLength), "\"", "") + "\", ")
+	interceptorRequestBodyBytes.WriteString("\"restrictedText\":" + " \"" + interceptorRequestBody.restrictedText + "\", ")
+	interceptorRequestBodyBytes.WriteString("\"dataSet\":" + " \"" + interceptorRequestBody.dataSet + "\", ")
+	interceptorRequestBodyBytes.WriteString("\"manifestName\":" + " \"" + interceptorRequestBody.manifestName + "\", ")
+	interceptorRequestBodyBytes.WriteString("\"snapshotDate\":" + " \"" + interceptorRequestBody.snapshotDate + "\", ")
+	interceptorRequestBodyBytes.WriteString("\"jobType\":" + " \"" + interceptorRequestBody.jobType + "\"}")
+	interceptorRequestBodyString := interceptorRequestBodyBytes.String()
+	interceptorRequestBodyString = strings.ReplaceAll(interceptorRequestBodyString, "\"false\"", "false")
+	interceptorRequestBodyString = strings.ReplaceAll(interceptorRequestBodyString, "\"true\"", "true")
+	proxywasm.LogInfof("body to be sent to interceptor : %s ", interceptorRequestBodyString)
+
+	//if err != nil {
+	//	proxywasm.LogErrorf("failed to Marshal interceptor RequestBody struct into bytes :  %v", err)
+	//}
 	bearerToken := []string{"Bearer", ctx.accessTokenInterceptor}
 	bearerTokenHeaderValue := strings.Join(bearerToken, " ")
 	if _, err := proxywasm.DispatchHttpCall("interceptor_service", [][2]string{
@@ -217,7 +224,7 @@ func (ctx *setBodyContext) OnHttpResponseBody(bodySize int, endOfStream bool) ty
 		{"X-Api-Key", os.Getenv("API_KEY")},
 		{"X-Resource-Token", bearerTokenHeaderValue},
 		{"X-Data-Set-Type", "JSON"},
-		{"Content-Type", "application/json"}}, interceptorRequestBodyBytes, nil,
+		{"Content-Type", "application/json"}}, []byte(interceptorRequestBodyString), nil,
 		50000, ctx.dispatchCallbackInterceptor); err != nil {
 		proxywasm.LogCriticalf("dispatch httpcall to interceptor endpoint failed: %v", err)
 		return types.ActionContinue
@@ -255,24 +262,37 @@ func (ctx *setBodyContext) dispatchCallbackToken(numHeaders, bodySize, numTraile
 	// This case, all the dispatched request was processed.
 	// Adds a response header to the original response.
 	//proxywasm.AddHttpResponseHeader("total-dispatched", strconv.Itoa(totalDispatchNum))
+	proxywasm.LogInfof("body size - %d", bodySize)
 	// And then contniue the original reponse.
-	responseBodyToken, _ := proxywasm.GetHttpResponseBody(0, bodySize)
-	tokenResponse := InterceptorTokenResponse{}
-	json.Unmarshal(responseBodyToken, &tokenResponse)
-	ctx.accessTokenInterceptor = tokenResponse.access_token
+	responseBodyToken, err := proxywasm.GetHttpCallResponseBody(0, bodySize)
+	if err != nil {
+		proxywasm.LogInfof("Failed to get response of token  - %v", err)
+	}
+	headers, _ := proxywasm.GetHttpResponseHeaders()
+
+	proxywasm.LogInfo("token response HEADERS %s")
+	for header := range headers {
+		proxywasm.LogInfof("header - %s", header)
+	}
+
+	proxywasm.LogInfof("token response body %s", responseBodyToken)
+	//json.Unmarshal(responseBodyToken, &tokenResponse)
+	ctx.accessTokenInterceptor, _ = jsonparser.GetString(responseBodyToken, "access_token")
+
 	proxywasm.ResumeHttpRequest()
 	proxywasm.LogInfof("Request resumed after Obtained token for interceptor, token value= %s", ctx.accessTokenInterceptor)
 
 }
 
 func (ctx *setBodyContext) dispatchCallbackInterceptor(numHeaders, bodySize, numTrailers int) {
-	responseBodyInterceptor, _ := proxywasm.GetHttpResponseBody(0, bodySize)
-	headers, err := proxywasm.GetHttpResponseHeaders()
+	responseBodyInterceptor, _ := proxywasm.GetHttpCallResponseBody(0, bodySize)
+	headers, err := proxywasm.GetHttpCallResponseHeaders()
 	if err != nil {
 		proxywasm.LogCriticalf("error reading response headers from interceptor: %v", err)
 	}
-	proxywasm.SendHttpResponse(200, headers, responseBodyInterceptor, -1)
+
+	proxywasm.ReplaceHttpResponseBody(responseBodyInterceptor)
+	proxywasm.LogInfof("Response resumed after called interceptor, response body sent to downstream= %s Headers - %v ", string(responseBodyInterceptor), headers)
 	proxywasm.ResumeHttpResponse()
-	proxywasm.LogInfof("Response resumed after called interceptor, response body sent to downstream= %s", string(responseBodyInterceptor))
 
 }

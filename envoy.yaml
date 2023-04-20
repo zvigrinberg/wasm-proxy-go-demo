@@ -39,8 +39,22 @@ static_resources:
                       type_url: type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
                       value:
                         config:
+                          configuration:
+                            "@type": type.googleapis.com/google.protobuf.StringValue
+                            value: "test"
                           vm_config:
                             runtime: "envoy.wasm.runtime.v8"
+                            environment_variables:
+                              host_env_keys:
+                                - JOB_TYPE
+                                - CLIENT_ID
+                                - CLIENT_SECRET
+                                - API_KEY
+                                - RESTRICTED_TEXT
+                                - MANIFEST_NAME
+                                - PROTECT_NULL_VALUES
+                                - PRESERVE_STRING_LENGTH
+
                             code:
                               local:
                                 filename: "./main.wasm"
@@ -64,7 +78,7 @@ static_resources:
                   address:
                     socket_address:
                       protocol: TCP
-                      address: api.exate.co
+                      address: "api.exate.co"
                       port_value: 443
 
     - name: employees_service
