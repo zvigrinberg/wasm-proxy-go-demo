@@ -27,6 +27,10 @@ static_resources:
                             prefix: "/"
                           route:
                             cluster: employees_service
+                        - match:
+                            prefix: "/employees"
+                          route:
+                            cluster: employees_service
 
                 http_filters:
                   - name: envoy.filters.http.wasm
@@ -45,7 +49,7 @@ static_resources:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
   clusters:
     - name: interceptor_service
-      connect_timeout: 0.25s
+      connect_timeout: 2s
       transport_socket:
         name: envoy.transport_sockets.tls
         typed_config:
@@ -64,7 +68,7 @@ static_resources:
                       port_value: 443
 
     - name: employees_service
-      connect_timeout: 0.25s
+      connect_timeout: 0.5s
       type: STATIC
       lb_policy: ROUND_ROBIN
       load_assignment:

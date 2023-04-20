@@ -1,13 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"github.com/tetratelabs/proxy-wasm-go-sdk/proxywasm"
 	"github.com/tetratelabs/proxy-wasm-go-sdk/proxywasm/types"
-	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -26,6 +22,8 @@ func main() {
 }
 
 // Structure for response body of the interceptor token endpoint
+
+//tinyjson:json
 type InterceptorTokenResponse struct {
 	access_token string
 	expires_in   int
@@ -34,6 +32,8 @@ type InterceptorTokenResponse struct {
 }
 
 // Structure to parse request body and propagate it to the request body of the request to be made to interceptor endpoint.
+
+//tinyjson:json
 type RequestBodyDownstream struct {
 	countryCode           string
 	dataOwningCountryCode string
@@ -91,10 +91,11 @@ type setBodyContext struct {
 	// Embed the default root http context here,
 	// so that we don't need to reimplement all the methods.
 	types.DefaultHttpContext
-	modifyResponse        bool
-	totalRequestBodySize  int
-	totalResponseBodySize int
-	bufferOperation       string
+	modifyResponse         bool
+	totalRequestBodySize   int
+	totalResponseBodySize  int
+	bufferOperation        string
+	accessTokenInterceptor string
 }
 
 // Override types.DefaultHttpContext.
@@ -120,11 +121,29 @@ func (ctx *setBodyContext) OnHttpRequestBody(bodySize int, endOfStream bool) typ
 	}
 	proxywasm.LogInfof("original request body: %s", string(originalBody))
 	var clientBody RequestBodyDownstream
-	json.Unmarshal([]byte(originalBody), &clientBody)
-
+	clientBody.UnmarshalJSON[]byte(originalBody))
+		//json.Unmarshal([]byte(originalBody), &clientBody)
 	propagatedBodyValues.countryCode = clientBody.countryCode
 	propagatedBodyValues.dataOwningCountryCode = clientBody.dataOwningCountryCode
-	return types.ActionContinue
+
+	//Get token from token endpoint
+	clientId := os.Getenv("CLIENT_ID")
+	clientSecret := os.Getenv("CLIENT_SECRET")
+	grantType := "client_credentials"
+	urlEncodedBody := "client_id=" + clientId + "&client_secret=" + clientSecret + "&grant_type=" + grantType
+
+	if _, err := proxywasm.DispatchHttpCall("interceptor_service", [][2]string{
+		{":path", "/apigator/identity/v1/token"},
+		{":method", "POST"},
+		{":authority", "api.exate.co"},
+		{"X-Api-Key", os.Getenv("API_KEY")},
+		{"Content-Type", "application/x-www-form-urlencoded"}}, []byte(urlEncodedBody), nil,
+		50000, ctx.dispatchCallbackToken); err != nil {
+		proxywasm.LogCriticalf("dispatch httpcall to token endpoint failed: %v", err)
+		return types.ActionContinue
+	}
+
+	return types.ActionPause
 }
 
 // Override types.DefaultHttpContext.
@@ -164,32 +183,6 @@ func (ctx *setBodyContext) OnHttpResponseBody(bodySize int, endOfStream bool) ty
 	originalBodyJson := string(originalBody)
 	originalBodyJsonReady := strings.ReplaceAll(originalBodyJson, "\"", "'")
 
-	//Get token from token endpoint
-
-	interceptorUrl := "https://api.exate.co"
-	tokenResource := "/apigator/identity/v1/token"
-	data := url.Values{}
-	data.Set("client_id", os.Getenv("CLIENT_ID"))
-	data.Set("client_secret", os.Getenv("CLIENT_SECRET"))
-	data.Set("grant_type", "client_credentials")
-
-	parsedTokenUrl, _ := url.ParseRequestURI(interceptorUrl)
-	parsedTokenUrl.Path = tokenResource
-	parsedTokenUrlString := parsedTokenUrl.String()
-
-	client := &http.Client{}
-	tokenRequest, _ := http.NewRequest(http.MethodPost, parsedTokenUrlString, strings.NewReader(data.Encode()))
-	tokenRequest.Header.Add("X-Api-Key", os.Getenv("API_KEY"))
-	tokenRequest.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-	response, _ := client.Do(tokenRequest)
-	theResponse, err := io.ReadAll(response.Body)
-	if err != nil {
-		proxywasm.LogErrorf("failed to read body of token response payload :  %v", err)
-	}
-	response.Body.Close()
-	tokenResponse := InterceptorTokenResponse{}
-	json.Unmarshal(theResponse, &tokenResponse)
-	theAccessToken := tokenResponse.access_token
 	interceptorRequestBody := InterceptorRequestBody{}
 	interceptorRequestBody.dataSet = originalBodyJsonReady
 	interceptorRequestBody.dataOwningCountryCode = propagatedBodyValues.dataOwningCountryCode
@@ -211,38 +204,26 @@ func (ctx *setBodyContext) OnHttpResponseBody(bodySize int, endOfStream bool) ty
 
 	interceptorRequestBody.preserveStringLength = preserveStringLength
 
-	InterceptorResource := "/apigator/protect/v1/dataset"
-	parsedInterceptorUrl, _ := url.ParseRequestURI(interceptorUrl)
-	parsedInterceptorUrl.Path = InterceptorResource
-	parsedInterceptorUrlString := parsedInterceptorUrl.String()
 	interceptorRequestBodyBytes, err := json.Marshal(interceptorRequestBody)
 	if err != nil {
 		proxywasm.LogErrorf("failed to Marshal interceptor RequestBody struct into bytes :  %v", err)
 	}
-	InterceptorRequest, _ := http.NewRequest(http.MethodPost, parsedInterceptorUrlString, bytes.NewBuffer(interceptorRequestBodyBytes))
-	InterceptorRequest.Header.Add("Content-Type", "application/json")
-	InterceptorRequest.Header.Add("X-Data-Set-Type", "JSON")
-	InterceptorRequest.Header.Add("X-Api-Key", os.Getenv("API_KEY"))
-	bearerToken := []string{"Bearer", theAccessToken}
-
-	InterceptorRequest.Header.Add("X-Resource-Token", strings.Join(bearerToken, " "))
-	responseInterceptor, _ := client.Do(InterceptorRequest)
-	theInterceptorResponse, err := io.ReadAll(responseInterceptor.Body)
-	if err != nil {
-		proxywasm.LogErrorf("failed to read body of token response payload :  %v", err)
-	}
-	//for s := range responseInterceptor.Header {
-	//
-	//
-	//}
-	responseInterceptor.Body.Close()
-	err = proxywasm.ReplaceHttpResponseBody(theInterceptorResponse)
-	//proxywasm.ReplaceHttpRequestHeaders()
-	if err != nil {
-		proxywasm.LogErrorf("failed to %s response body: %v", err)
+	bearerToken := []string{"Bearer", ctx.accessTokenInterceptor}
+	bearerTokenHeaderValue := strings.Join(bearerToken, " ")
+	if _, err := proxywasm.DispatchHttpCall("interceptor_service", [][2]string{
+		{":path", "/apigator/protect/v1/dataset"},
+		{":method", "POST"},
+		{":authority", "api.exate.co"},
+		{"X-Api-Key", os.Getenv("API_KEY")},
+		{"X-Resource-Token", bearerTokenHeaderValue},
+		{"X-Data-Set-Type", "JSON"},
+		{"Content-Type", "application/json"}}, interceptorRequestBodyBytes, nil,
+		50000, ctx.dispatchCallbackInterceptor); err != nil {
+		proxywasm.LogCriticalf("dispatch httpcall to interceptor endpoint failed: %v", err)
 		return types.ActionContinue
 	}
-	return types.ActionContinue
+	return types.ActionPause
+
 }
 
 type echoBodyContext struct {
@@ -267,3 +248,31 @@ type echoBodyContext struct {
 //	}
 //	return types.ActionPause
 //}
+
+func (ctx *setBodyContext) dispatchCallbackToken(numHeaders, bodySize, numTrailers int) {
+	// Clear access token field from old values
+	ctx.accessTokenInterceptor = ""
+	// This case, all the dispatched request was processed.
+	// Adds a response header to the original response.
+	//proxywasm.AddHttpResponseHeader("total-dispatched", strconv.Itoa(totalDispatchNum))
+	// And then contniue the original reponse.
+	responseBodyToken, _ := proxywasm.GetHttpResponseBody(0, bodySize)
+	tokenResponse := InterceptorTokenResponse{}
+	json.Unmarshal(responseBodyToken, &tokenResponse)
+	ctx.accessTokenInterceptor = tokenResponse.access_token
+	proxywasm.ResumeHttpRequest()
+	proxywasm.LogInfof("Request resumed after Obtained token for interceptor, token value= %s", ctx.accessTokenInterceptor)
+
+}
+
+func (ctx *setBodyContext) dispatchCallbackInterceptor(numHeaders, bodySize, numTrailers int) {
+	responseBodyInterceptor, _ := proxywasm.GetHttpResponseBody(0, bodySize)
+	headers, err := proxywasm.GetHttpResponseHeaders()
+	if err != nil {
+		proxywasm.LogCriticalf("error reading response headers from interceptor: %v", err)
+	}
+	proxywasm.SendHttpResponse(200, headers, responseBodyInterceptor, -1)
+	proxywasm.ResumeHttpResponse()
+	proxywasm.LogInfof("Response resumed after called interceptor, response body sent to downstream= %s", string(responseBodyInterceptor))
+
+}
