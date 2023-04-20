@@ -292,6 +292,9 @@ func (ctx *setBodyContext) dispatchCallbackInterceptor(numHeaders, bodySize, num
 	}
 
 	proxywasm.ReplaceHttpResponseBody(responseBodyInterceptor)
+
+	//has no effects because headers already flushed to buffers to be sent to downstream client.
+	proxywasm.ReplaceHttpResponseHeaders(headers)
 	proxywasm.LogInfof("Response resumed after called interceptor, response body sent to downstream= %s Headers - %v ", string(responseBodyInterceptor), headers)
 	proxywasm.ResumeHttpResponse()
 
