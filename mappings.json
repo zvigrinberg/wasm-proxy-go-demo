@@ -1,0 +1,40 @@
+{
+"mappings": [
+{
+"request": {
+"method": "POST",
+"urlPath": "/employees"
+},
+"response": {
+  "status": 200,
+  "jsonBody": {
+    "employees": {
+      "employee": [
+        {
+          "id": "1",
+          "firstName": "Robert",
+          "lastName": "Brownforest",
+          "fullName": "Robert Brownforest",
+          "DOB": "18/12/1965",
+          "email": "RB1@exate.com",
+          "photo": "https://pbs.twimg.com/profile_images/735509975649378305/B81JwLT7.jpg"
+        },
+        {
+          "id": "2",
+          "firstName": "Rip",
+          "lastName": "Van Winkle",
+          "fullName": "Rip Van Winkle",
+          "DOB": "18/01/1972",
+          "email": "RVW1@exate.com",
+          "photo": "https://pbs.twimg.com/profile_images/735509975649378305/B81JwLT7.jpg"
+        }
+      ]
+    }
+  },
+  "headers": {
+    "content-type": "application/json"
+  }
+ }
+}
+ ]
+}

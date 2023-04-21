@@ -54,10 +54,11 @@ static_resources:
                                 - MANIFEST_NAME
                                 - PROTECT_NULL_VALUES
                                 - PRESERVE_STRING_LENGTH
+                                - INTERCEPTOR_CLUSTER_NAME
 
                             code:
                               local:
-                                filename: "./main.wasm"
+                                filename: "./plugin.wasm"
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router

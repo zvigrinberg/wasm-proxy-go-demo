@@ -124,7 +124,8 @@ func (ctx *setBodyContext) OnHttpRequestBody(bodySize int, endOfStream bool) typ
 	grantType := "client_credentials"
 	urlEncodedBody := "client_id=" + clientId + "&client_secret=" + clientSecret + "&grant_type=" + grantType
 	proxywasm.LogInfof("urlEncodedBody= %s", urlEncodedBody)
-	if _, err := proxywasm.DispatchHttpCall("interceptor_service", [][2]string{
+	clusterName := os.Getenv("INTERCEPTOR_CLUSTER_NAME")
+	if _, err := proxywasm.DispatchHttpCall(clusterName, [][2]string{
 		{":path", "/apigator/identity/v1/token"},
 		{":method", "POST"},
 		{":authority", "api.exate.co"},
@@ -196,6 +197,7 @@ func (ctx *setBodyContext) OnHttpResponseBody(bodySize int, endOfStream bool) ty
 	interceptorRequestBody.preserveStringLength = preserveStringLength
 
 	//interceptorRequestBodyBytes, err := json.Marshal(interceptorRequestBody)
+	// Manually Marshalling the RequestBody because encoding/json package not supported in TinyGo
 	interceptorRequestBodyBytes := strings.Builder{}
 	interceptorRequestBodyBytes.WriteString("{")
 	interceptorRequestBodyBytes.WriteString("\"countryCode\":" + " \"" + interceptorRequestBody.countryCode + "\", ")
@@ -217,7 +219,8 @@ func (ctx *setBodyContext) OnHttpResponseBody(bodySize int, endOfStream bool) ty
 	//}
 	bearerToken := []string{"Bearer", ctx.accessTokenInterceptor}
 	bearerTokenHeaderValue := strings.Join(bearerToken, " ")
-	if _, err := proxywasm.DispatchHttpCall("interceptor_service", [][2]string{
+	clusterName := os.Getenv("INTERCEPTOR_CLUSTER_NAME")
+	if _, err := proxywasm.DispatchHttpCall(clusterName, [][2]string{
 		{":path", "/apigator/protect/v1/dataset"},
 		{":method", "POST"},
 		{":authority", "api.exate.co"},
