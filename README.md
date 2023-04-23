@@ -22,7 +22,7 @@ podman run -d -p 9999:9999 --name mock-service quay.io/zgrinber/wiremock:latest 
 curl -i -X POST http://localhost:9999/__admin/mappings/import -T mappings.json
 ```
 
-4. Populate environment variables with relevant values:
+4. Populate environment variables with relevant values to be exposed to the wasm plugin VM through envoy proxy:
 ```shell
 export CLINET_ID=postman
 export CLIENT_SECRET=changeme
@@ -43,7 +43,7 @@ envoy -c envoy.yaml  --concurrency 2 --log-format '%v'
 
 6. Test the plugin by sending HTTP Post Request 
 ```shell
-curl -i --location --request POST 'http://localhost:18000/employees' --header 'Content-Type: application/json' --header 'Cookie: cd10b69e39387eb7ec9ac241201ab1ab=fcd79ca747647ba06fa611fdf057fb80' --data-raw '{"countryCode": "IL", "dataOwningCountryCode": "IL"}'
+curl -i --location --request POST 'http://localhost:18000/employees' --header 'Content-Type: application/json'  --data-raw '{"countryCode": "IL", "dataOwningCountryCode": "IL"}'
 ```
 
 7. Build Container Image with the Wasm Binary:
