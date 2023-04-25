@@ -1,7 +1,3 @@
-# This config has Envoy listen on localhost:18000, responding to any requests with static content "hello from server".
-# In addition, the example wasm plugin to validate the requests payload runs.
-# The plugin intercepts the request and makes Envoy return 403 instead of the static content
-# if the request has no JSON payload or the payload JSON doesn't have "id" or "token" keys.
 static_resources:
   listeners:
     - name: main
